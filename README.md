@@ -40,20 +40,6 @@ git branch -M main
 git push -u origin main
 ```
 
-> GitHub Pages only serves from private repositories on a paid plan, so keep the
-> repo public unless you have GitHub Pro. The repo holds no personal data —
-> your food log never leaves your phone.
-
-### 2. Turn on Pages
-
-In the repository: **Settings → Pages**. Under "Build and deployment" set
-**Source** to *Deploy from a branch*, **Branch** to `main` and the folder to
-`/ (root)`, then **Save**. Give it a minute; the page will then show your URL:
-
-```
-https://YOUR-USERNAME.github.io/nutrilog/
-```
-
 ### 3. Add it to your home screen
 
 On your iPhone, open that URL **in Safari** (Add to Home Screen is a Safari
