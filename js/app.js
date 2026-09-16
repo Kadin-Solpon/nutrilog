@@ -436,7 +436,10 @@
 
       var r = state.results;
       html += '<div class="card flush"><h2>Packaged products &middot; Open Food Facts</h2>';
-      if (!r || r.query !== q) {
+      if (q.length < 3) {
+        html += '<div class="empty-state">Type at least three letters to search ' +
+          'packaged products — or just scan the barcode.</div>';
+      } else if (!r || r.query !== q) {
         html += '<div class="empty-state"><span class="spinner"></span> Searching…</div>';
       } else if (r.error) {
         html += '<div class="empty-state">' + esc(r.error) + '</div>';
@@ -1498,7 +1501,12 @@
       b.setAttribute('aria-selected', String(b.dataset.tab === state.tab));
     });
 
-    if (state.tab === 'add') renderResults();
+    if (state.tab === 'add') {
+      // Returning to the tab with a query still in the box but no result and
+      // no request in flight would otherwise spin forever.
+      if (state.query.trim() && !state.results) onQuery(state.query);
+      renderResults();
+    }
     window.scrollTo(0, scrollTop);
   }
 
