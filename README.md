@@ -171,11 +171,14 @@ server, no account and no sync — the log never leaves the device.
 |---|---|
 | Deleting the home-screen app | Takes its storage with it |
 | Settings → Safari → Clear History and Website Data | Wipes all site storage, this app included |
-| Never installing it to the home screen | Safari evicts script-written storage for ordinary sites left unvisited for 7 days |
+| Never installing it to the home screen | Safari deletes script-written storage for ordinary sites after 7 days of Safari use without interacting with that site |
 
 That last row is the one to watch. **Add it to your home screen and open it from
-that icon.** Installed web apps are exempt from the 7-day eviction; a plain
-Safari tab is not.
+that icon.** A home-screen web app is not part of Safari and keeps its own
+days-of-use counter, which resets every time you open it; Apple has stated it
+does not expect such an app's first-party data to be deleted. A plain Safari tab
+gets no such protection. Opening the app regularly — which you will, if you're
+logging meals — keeps that counter from ever running down.
 
 ### How much space it uses
 
