@@ -33,6 +33,7 @@
       if (raw) {
         var parsed = JSON.parse(raw);
         data = merge(blank(), parsed);
+        if (compact() > 0) flush();      // shrink a log from an older build
       }
     } catch (e) {
       console.warn('Could not read saved data; starting fresh.', e);
@@ -65,10 +66,16 @@
     try {
       localStorage.setItem(KEY, JSON.stringify(data));
     } catch (e) {
-      // Most likely quota. Drop the barcode cache first, then warn.
+      // Almost certainly the quota. Shed the rebuildable caches first.
       data.barcodeCache = {};
-      try { localStorage.setItem(KEY, JSON.stringify(data)); }
-      catch (e2) { alert('Storage is full — export your data from Settings.'); }
+      data.recent = (data.recent || []).slice(0, 10);
+      try {
+        localStorage.setItem(KEY, JSON.stringify(data));
+      } catch (e2) {
+        alert('This device is out of storage for the app, so the last change ' +
+          'was not saved. Open Goals \u2192 Settings & data \u2192 Export my ' +
+          'data to keep a copy, then delete some older days.');
+      }
     }
   }
 
@@ -93,8 +100,99 @@
     return dateKey(d);
   }
 
+  /* -------------------------------------------------------- entry slimming
+     A built-in food's nutrient table ships with the app and is identical on
+     every install, so snapshotting all 33 values onto each entry costs about
+     1.6 kB a time — roughly 3.5 MB a year of daily logging, which overruns
+     Safari's ~5 MB per-origin localStorage budget inside a year. Built-in
+     entries therefore store just the reference plus a four-value fallback
+     (used only if a later version drops the food), and are rehydrated from the
+     table on read. Open Food Facts and custom foods still snapshot in full:
+     that data can change or disappear, so history has to own a copy. */
+  // Everything here is recoverable from foodId, so it is not written to disk.
+  var DERIVED_KEYS = ['per100', 'servings', 'density', 'liquid', 'name',
+    'brand', 'barcode', 'unitLabel', 'group'];
+
+  function isSlim(entry) { return !entry.per100 && entry.kc !== undefined; }
+
+  function slim(entry) {
+    if (isSlim(entry)) return entry;                 // already compacted
+    if (entry.source !== 'builtin') return entry;
+    if (!NL.foods.byId(entry.foodId)) return entry;  // unknown: keep the copy
+
+    var out = {};
+    Object.keys(entry).forEach(function (k) {
+      if (DERIVED_KEYS.indexOf(k) < 0) out[k] = entry[k];
+    });
+    // Single safety value, for the case where a later build drops the food:
+    // the day's calorie total is the number worth protecting.
+    out.kc = (entry.per100 && entry.per100.calories != null)
+      ? entry.per100.calories : 0;
+    return out;
+  }
+
+  function unitLabelFor(food, unitId) {
+    var list = NL.units.unitsFor(food);
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === unitId) return list[i].label;
+    }
+    return unitId;
+  }
+
+  function hydrate(entry) {
+    if (!isSlim(entry)) return entry;
+    var f = NL.foods.byId(entry.foodId);
+    var out = {};
+    Object.keys(entry).forEach(function (k) { if (k !== 'kc') out[k] = entry[k]; });
+    if (f) {
+      out.per100 = f.per100;
+      out.servings = f.servings;
+      out.density = f.density;
+      out.liquid = f.liquid;
+      out.name = f.name;
+      out.brand = f.brand || '';
+      out.group = f.group;
+      out.unitLabel = unitLabelFor(f, entry.unit);
+    } else {
+      // Gone from a newer build. Keep the calories so the day still adds up,
+      // and say plainly that the detail is missing rather than inventing it.
+      out.per100 = { calories: entry.kc || 0 };
+      out.servings = [];
+      out.density = null;
+      out.liquid = false;
+      out.name = 'Food no longer in the app';
+      out.brand = '';
+      out.unitLabel = entry.unit;
+      out.orphan = true;
+    }
+    return out;
+  }
+
+  /* One-time pass so a log written by an earlier build shrinks too. */
+  function compact() {
+    var saved = 0;
+    Object.keys(data.days).forEach(function (k) {
+      data.days[k] = data.days[k].map(function (e) {
+        var before = JSON.stringify(e).length;
+        var after = slim(e);
+        saved += before - JSON.stringify(after).length;
+        return after;
+      });
+    });
+    data.recent = (data.recent || []).map(slim);
+    return saved;
+  }
+
+  function usage() {
+    var bytes = JSON.stringify(data).length;
+    return { bytes: bytes, days: Object.keys(data.days).length,
+      entries: Object.keys(data.days).reduce(function (n, k) {
+        return n + data.days[k].length;
+      }, 0) };
+  }
+
   /* ------------------------------------------------------------ entries */
-  function getDay(key) { return data.days[key] || []; }
+  function getDay(key) { return (data.days[key] || []).map(hydrate); }
 
   function uid() {
     return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -104,7 +202,7 @@
     if (!data.days[dayKey]) data.days[dayKey] = [];
     entry.id = entry.id || uid();
     entry.ts = entry.ts || Date.now();
-    data.days[dayKey].push(entry);
+    data.days[dayKey].push(slim(entry));
     pushRecent(entry);
     save();
     return entry;
@@ -114,9 +212,11 @@
     var list = data.days[dayKey] || [];
     for (var i = 0; i < list.length; i++) {
       if (list[i].id === id) {
-        Object.keys(patch).forEach(function (k) { list[i][k] = patch[k]; });
+        var merged = hydrate(list[i]);
+        Object.keys(patch).forEach(function (k) { merged[k] = patch[k]; });
+        list[i] = slim(merged);
         save();
-        return list[i];
+        return merged;
       }
     }
     return null;
@@ -133,7 +233,7 @@
   }
 
   function moveEntry(fromKey, id, toKey) {
-    var e = removeEntry(fromKey, id);
+    var e = removeEntry(fromKey, id);   // already slim; addEntry leaves it be
     if (e) addEntry(toKey, e);
     return e;
   }
@@ -150,11 +250,11 @@
     data.recent = data.recent.filter(function (r) {
       return !(r.foodId === ref.foodId && r.source === ref.source);
     });
-    data.recent.unshift(ref);
-    if (data.recent.length > 60) data.recent.length = 60;
+    data.recent.unshift(slim(ref));
+    if (data.recent.length > 40) data.recent.length = 40;
   }
 
-  function recents() { return data.recent; }
+  function recents() { return (data.recent || []).map(hydrate); }
 
   function customFoods() { return data.customFoods; }
 
@@ -271,6 +371,7 @@
     cacheBarcode: cacheBarcode, cachedBarcode: cachedBarcode,
     profile: profile, setProfile: setProfile, goalConfig: goalConfig,
     setManualGoal: setManualGoal, settings: settings, setSetting: setSetting,
-    exportJSON: exportJSON, importJSON: importJSON, wipe: wipe, uid: uid
+    exportJSON: exportJSON, importJSON: importJSON, wipe: wipe, uid: uid,
+    usage: usage, compact: compact, hydrate: hydrate
   };
 })(window.NL = window.NL || {});

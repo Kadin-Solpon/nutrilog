@@ -90,9 +90,10 @@ To try it from your phone on the same Wi-Fi, use your Mac's LAN IP. Note that
 
 ## Tests
 
-119 assertions covering unit conversion, the food table, DRI lookups, the
+147 assertions covering unit conversion, the food table, DRI lookups, the
 energy and target math, the day-log totals, and the Open Food Facts parser.
-They run through JavaScriptCore via `osascript`, so there is nothing to install:
+plus the storage-compaction round-trip. They run through JavaScriptCore via
+`osascript`, so there is nothing to install:
 
 ```sh
 sh test/run.sh
@@ -158,9 +159,42 @@ not a confident `0`.
 
 This is a tracking tool, not medical advice.
 
-## Backups
+## Where your data lives, and for how long
 
-**Goals → Settings & data → Export my data** writes a JSON file with
-everything. Do this occasionally. Clearing Safari's website data, or deleting
-the home-screen app, takes the log with it. Import restores a backup on any
-device.
+Everything is in your browser's `localStorage`, under a single key
+(`nutrilog.v1`), scoped to the origin the app is served from. There is no
+server, no account and no sync — the log never leaves the device.
+
+**It persists indefinitely, with three exceptions:**
+
+| What removes it | Why |
+|---|---|
+| Deleting the home-screen app | Takes its storage with it |
+| Settings → Safari → Clear History and Website Data | Wipes all site storage, this app included |
+| Never installing it to the home screen | Safari evicts script-written storage for ordinary sites left unvisited for 7 days |
+
+That last row is the one to watch. **Add it to your home screen and open it from
+that icon.** Installed web apps are exempt from the 7-day eviction; a plain
+Safari tab is not.
+
+### How much space it uses
+
+Entries for built-in foods are stored as a reference plus the logged amount, and
+the nutrient table is rehydrated from the app on read, so an entry costs about
+**240 bytes** rather than the ~1.6 kB a full nutrient snapshot would take.
+Measured at twelve items a day:
+
+| | |
+|---|---|
+| One day | ~2.8 kB |
+| One year | ~0.64 MB |
+| Browser budget | ~5 MB per origin |
+| Headroom | **about 5 years** of daily logging |
+
+Scanned and custom foods still store a full snapshot, because that data can
+change or disappear upstream and history has to own its copy. Those entries run
+nearer 1.5 kB, so a log made mostly of scanned products fills up faster.
+
+**Goals → Settings & data** shows current usage with a projection, and warns at
+70%. Export a backup from the same place now and then — it writes one JSON file
+holding everything, and Import restores it on any device.

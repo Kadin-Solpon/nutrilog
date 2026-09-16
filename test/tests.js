@@ -117,6 +117,109 @@ ok('recents recorded', S.recents().length === 2);
 var json = S.exportJSON();
 ok('export round-trips', JSON.parse(json).days[day].length === 1);
 
+/* ------------------------------------------------- storage compaction
+   Built-in entries are stored by reference and rehydrated on read. These
+   guard that the compaction is lossless for the values that matter. */
+var S2 = NL.store;
+S2.wipe();
+var cday = '2026-03-04';
+var chicken = F.byId('b:chicken-breast-skinless-roasted');
+S2.addEntry(cday, { foodId: chicken.id, source: 'builtin', name: chicken.name,
+  brand: '', qty: 6, unit: 'oz', unitLabel: 'oz', grams: 170.1,
+  per100: chicken.per100, servings: chicken.servings, density: chicken.density,
+  liquid: chicken.liquid, meal: 'Lunch' });
+
+var storedRaw = S2.raw().days[cday][0];
+ok('stored built-in entry drops the nutrient snapshot',
+  storedRaw.per100 === undefined && storedRaw.servings === undefined);
+ok('stored built-in entry drops the derivable name',
+  storedRaw.name === undefined);
+ok('stored built-in entry keeps a calorie safety value', storedRaw.kc === 165);
+ok('stored entry is under 300 bytes', JSON.stringify(storedRaw).length < 300,
+  JSON.stringify(storedRaw).length);
+
+var hy = S2.getDay(cday)[0];
+ok('read back restores the full nutrient map',
+  NL.nutrients.keys.every(function (k) { return hy.per100[k] === chicken.per100[k]; }));
+ok('read back restores the name', hy.name === chicken.name);
+ok('read back restores servings', hy.servings.length === chicken.servings.length);
+ok('read back restores the unit label', hy.unitLabel === 'oz');
+close('totals survive compaction', S2.dayTotals(cday).totals.protein,
+  31.02 * 1.701, 0.01);
+close('micronutrients survive compaction', S2.dayTotals(cday).totals.selenium,
+  27.6 * 1.701, 0.01);
+ok('coverage still complete after compaction',
+  S2.dayTotals(cday).coverage.selenium === 1);
+
+// a serving-unit entry, to check unit-label recovery for named servings
+S2.addEntry(cday, { foodId: 'b:banana-raw', source: 'builtin', name: 'x',
+  brand: '', qty: 1, unit: 'medium', unitLabel: 'medium', grams: 118,
+  per100: banana.per100, servings: banana.servings, meal: 'Snacks' });
+ok('named serving label recovers', S2.getDay(cday)[1].unitLabel === 'medium');
+
+// scanned and custom foods must keep their own copy
+S2.addEntry(cday, { foodId: 'o:999', source: 'off', name: 'Scanned thing',
+  brand: 'Acme', barcode: '999', qty: 1, unit: 'g', grams: 40,
+  per100: { calories: 500, protein: 9 }, servings: [], meal: 'Snacks' });
+var offRaw = S2.raw().days[cday][2];
+ok('scanned entry keeps its full snapshot',
+  offRaw.per100 && offRaw.per100.calories === 500 && offRaw.name === 'Scanned thing');
+ok('scanned entry reads back unchanged',
+  S2.getDay(cday)[2].per100.calories === 500);
+
+// editing a compacted entry
+var eid = S2.getDay(cday)[0].id;
+S2.updateEntry(cday, eid, { qty: 8, unit: 'oz', grams: 226.8 });
+close('edited compacted entry recomputes', S2.dayTotals(cday).totals.protein,
+  31.02 * 2.268 + 1.09 * 1.18 + 9 * 0.4, 0.02);
+ok('edited entry stays compacted', S2.raw().days[cday][0].per100 === undefined);
+ok('edit kept the food reference', S2.getDay(cday)[0].name === chicken.name);
+
+// a food removed by a future build
+S2.raw().days[cday].push({ id: 'zz', source: 'builtin', foodId: 'b:gone-forever',
+  qty: 100, unit: 'g', grams: 100, meal: 'Snacks', kc: 123 });
+var orph = S2.getDay(cday)[3];
+ok('missing food is flagged, not dropped', orph.orphan === true);
+ok('missing food keeps its calories', orph.per100.calories === 123);
+ok('missing food says so plainly', /no longer in the app/.test(orph.name));
+ok('day total still includes the orphan',
+  Math.round(S2.dayTotals(cday).totals.calories) ===
+  Math.round(165 * 2.268 + 89 * 1.18 + 500 * 0.4 + 123));
+
+// legacy logs written before compaction existed
+S2.raw().days['2026-03-05'] = [{ id: 'old1', source: 'builtin',
+  foodId: 'b:broccoli-raw', name: 'Broccoli, raw', brand: '', qty: 100,
+  unit: 'g', unitLabel: 'g', grams: 100, meal: 'Lunch',
+  per100: F.byId('b:broccoli-raw').per100,
+  servings: F.byId('b:broccoli-raw').servings }];
+var freed = S2.compact();
+ok('compact() shrinks a legacy log', freed > 500, freed);
+ok('legacy entry still reads correctly',
+  S2.getDay('2026-03-05')[0].per100.vitaminC === 89.2);
+ok('legacy entry got compacted',
+  S2.raw().days['2026-03-05'][0].per100 === undefined);
+
+// export/import must survive the whole thing
+var snapshot = S2.exportJSON();
+var beforeKcal = S2.dayTotals(cday).totals.calories;
+S2.wipe();
+ok('wipe clears the log', S2.getDay(cday).length === 0);
+S2.importJSON(snapshot);
+close('import restores totals exactly', S2.dayTotals(cday).totals.calories,
+  beforeKcal, 0.001);
+close('import restores nutrient detail',
+  S2.dayTotals(cday).totals.selenium, 27.6 * 2.268 + 1.0 * 1.18, 0.01);
+
+var u = S2.usage();
+ok('usage() reports bytes and counts',
+  u.bytes > 0 && u.entries === 5 && u.days === 2,
+  JSON.stringify(u));
+
+// Leave the store as the goals section below expects to find it.
+S2.wipe();
+S2.setProfile({ sex: 'male', age: 30, heightCm: 180, weightKg: 80,
+  activity: 1.55, goal: 'lose', rate: 0.5 });
+
 /* ---------------------------------------------------------------- goals */
 var G = NL.goals;
 close('BMR male 80kg/180cm/30', G.bmr(S.profile()), 1780, 0.01);

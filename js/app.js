@@ -602,6 +602,47 @@
     return html;
   }
 
+  /* Browsers give a page a few megabytes of local storage. At ~240 bytes an
+     entry that is years of logging, but it is finite, so it is shown rather
+     than left to fail silently one day. */
+  var STORAGE_BUDGET = 5 * 1024 * 1024;
+
+  function storageHTML() {
+    var u = NL.store.usage();
+    var used = u.bytes / STORAGE_BUDGET;
+    var kb = u.bytes < 1024 * 1024
+      ? (u.bytes / 1024).toFixed(0) + ' KB'
+      : (u.bytes / 1048576).toFixed(2) + ' MB';
+    var perDay = u.days > 0 ? u.bytes / u.days : 0;
+    var yearsLeft = perDay > 0
+      ? (STORAGE_BUDGET - u.bytes) / (perDay * 365) : null;
+
+    var st = { pct: used * 100, fill: used > 0.85 ? 'var(--critical)'
+      : used > 0.7 ? 'var(--warning)' : 'var(--s1)' };
+
+    var html = '<div style="margin-top:16px">' +
+      '<div class="row between"><span class="sub">Storage used</span>' +
+      '<span class="sub" style="font-variant-numeric:tabular-nums">' + kb +
+      ' of ~5 MB</span></div>' +
+      meterHTML(st, { aria: 'Storage ' + kb + ' of about 5 MB' }) +
+      '<div class="muted" style="margin-top:6px">' + u.entries +
+      ' item' + (u.entries === 1 ? '' : 's') + ' across ' + u.days + ' day' +
+      (u.days === 1 ? '' : 's') +
+      (yearsLeft != null && u.days >= 5
+        ? ' · about ' + (yearsLeft >= 1 ? Math.round(yearsLeft) + ' more years'
+            : Math.round(yearsLeft * 12) + ' more months') + ' at this rate'
+        : '') +
+      '</div>';
+
+    if (used > 0.7) {
+      html += '<div class="notice ' + (used > 0.85 ? 'bad' : 'warn') +
+        '" style="margin-top:10px"><span class="dot"></span><div>Storage is ' +
+        Math.round(used * 100) + '% full. Export a backup, then erase the ' +
+        'oldest days you no longer need.</div></div>';
+    }
+    return html + '</div>';
+  }
+
   /* ============================================================== GOALS */
   function viewGoals() {
     var p = NL.store.profile();
@@ -773,6 +814,7 @@
       '<button class="btn sm" data-act="import">Import a backup</button>' +
       '<button class="btn sm danger" data-act="wipe">Erase everything</button></div>' +
       '<input type="file" id="importfile" accept="application/json,.json" class="hidden">' +
+      storageHTML() +
       '<div class="muted" style="margin-top:12px">Everything stays on this device — ' +
       'nothing is uploaded, and there is no account. Barcode lookups are the one ' +
       'network call, and they go to Open Food Facts. Export a backup now and then; ' +
