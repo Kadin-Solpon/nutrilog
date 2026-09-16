@@ -40,7 +40,7 @@ git branch -M main
 git push -u origin main
 ```
 
-### 3. Add it to your home screen
+### 2. Add it to your home screen
 
 On your iPhone, open that URL **in Safari** (Add to Home Screen is a Safari
 feature). Then:
